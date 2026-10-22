@@ -3,16 +3,19 @@ const label = document.getElementById("volLabel");
 const footer = document.getElementById("footerMsg");
 const resetBtn = document.getElementById("resetBtn");
 
+// Use Firefox's native "browser" namespace, falling back to "chrome" for Chrome.
+const api = typeof browser !== "undefined" ? browser : chrome;
+
 resetBtn.addEventListener("click", () => {
   const defaultVolume = 1.0;
   slider.value = defaultVolume;
   label.textContent = defaultVolume.toFixed(1) + "x";
-  chrome.storage.local.set({ boostVolume: defaultVolume });
+  api.storage.local.set({ boostVolume: defaultVolume });
   applyVolumeToTab(defaultVolume);
 });
 
 // Load saved volume boost on popup open
-chrome.storage.local.get(["boostVolume"], (result) => {
+api.storage.local.get(["boostVolume"]).then((result) => {
   const savedVolume = result.boostVolume || 1.0;
   slider.value = savedVolume;
   label.textContent = savedVolume.toFixed(1) + "x";
@@ -22,32 +25,37 @@ chrome.storage.local.get(["boostVolume"], (result) => {
 slider.addEventListener("input", () => {
   const volume = parseFloat(slider.value);
   label.textContent = volume.toFixed(1) + "x";
-  chrome.storage.local.set({ boostVolume: volume });
+  api.storage.local.set({ boostVolume: volume });
   applyVolumeToTab(volume);
 });
 
 function applyVolumeToTab(volume) {
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+  api.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
     if (!tabs.length) return;
 
-    chrome.scripting.executeScript({
-      target: { tabId: tabs[0].id },
-      func: injectGainControl,
-      args: [volume]
-    }, (results) => {
-      const result = results?.[0]?.result;
+    // Firefox's scripting.executeScript does not support an "args" option,
+    // so the volume is embedded directly into the injected function.
+    const inject = new Function("return (" + injectGainControl.toString() + ")(" + volume + ")");
 
-      chrome.action.setBadgeText({ text: volume.toFixed(1) + "x" });
-      chrome.action.setBadgeBackgroundColor({ color: "#4CAF50" });
+    api.scripting
+      .executeScript({
+        target: { tabId: tabs[0].id },
+        func: inject
+      })
+      .then((results) => {
+        const result = results?.[0]?.result;
 
-      if (result.success) {
-        footer.textContent = "🎬 Video detected and volume boosted!";
-      } else if (result.iframeUrl) {
-        footer.innerHTML = `⚠️ Could not find video, but found an iframe. <a href="${result.iframeUrl}" target="_blank">Click HERE</a> to open video in a new tab so you can adjust volume.`;
-      } else {
-        footer.textContent = "⚠️ No video or iframe found on this page.";
-      }
-    });
+        api.action.setBadgeText({ text: volume.toFixed(1) + "x" });
+        api.action.setBadgeBackgroundColor({ color: "#4CAF50" });
+
+        if (result.success) {
+          footer.textContent = "🎬 Video detected and volume boosted!";
+        } else if (result.iframeUrl) {
+          footer.innerHTML = `⚠️ Could not find video, but found an iframe. <a href="${result.iframeUrl}" target="_blank">Click HERE</a> to open video in a new tab so you can adjust volume.`;
+        } else {
+          footer.textContent = "⚠️ No video or iframe found on this page.";
+        }
+      });
   });
 }
 
